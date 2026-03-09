@@ -274,12 +274,14 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
       fromNumber = p.hs_call_from_number ?? null
       toNumber = p.hs_call_to_number ?? null
 
-      // Full body: prefer summary (AI-generated), fall back to call body/notes
-      const fullBody = p.hs_call_summary ?? p.hs_call_body ?? null
-      body = stripHtml(fullBody)
+      // Priority 1: hs_call_body — HubSpot native structured summary
+      //   (contains Team Goal, Lemon Law Details, Solutions, Action Items, Disposition, etc.)
+      // Priority 2: hs_call_summary — shorter AI-generated version (fallback only)
+      // hs_call_summary is stored separately in raw_metadata as ai_summary — never overrides source
+      body = stripHtml(p.hs_call_body) || stripHtml(p.hs_call_summary) || null
       snippet = body ? body.slice(0, 500) : null
 
-      // Transcript reference
+      // Transcript reference (Phase 2: fetch full transcript via transcription_id)
       if (p.hs_call_has_transcript === 'true' && p.hs_call_transcription_id) {
         transcript = `HubSpot transcript ID: ${p.hs_call_transcription_id}`
       }
@@ -387,7 +389,13 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
     source_system:         'hubspot',
     resolution_method:     resolutionMethod,
     needs_review:          false,
-    raw_metadata:          { type, properties: p, direction_source: directionSource },
+    raw_metadata:          {
+      type,
+      properties: p,
+      direction_source: directionSource,
+      // For calls: preserve short AI summary separately — never used as primary
+      ...(type === 'calls' && p.hs_call_summary ? { ai_summary: stripHtml(p.hs_call_summary) } : {}),
+    },
     is_deleted:            false,
     updated_at:            new Date().toISOString(),
   }
