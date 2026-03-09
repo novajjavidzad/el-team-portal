@@ -99,8 +99,10 @@ async function listFolderFiles(sharePointUrl) {
   const drive = await graph(`/sites/${siteId}/drive`)
   const driveId = drive.id
 
-  // 3. List files in folder (non-recursive for now — just top-level)
-  const encodedPath = encodeURIComponent(folderPath)
+  // 3. List files in folder (non-recursive — just top-level)
+  // Encode each path segment individually so slashes remain as path separators
+  // (encodeURIComponent on the full path would encode / as %2F, breaking Graph)
+  const encodedPath = folderPath.split('/').map(s => encodeURIComponent(s)).join('/')
   const items = await graph(`/drives/${driveId}/root:/${encodedPath}:/children?$top=100&$select=id,name,file,size,webUrl,createdDateTime,lastModifiedDateTime,createdBy,lastModifiedBy`)
 
   const files = (items.value ?? []).filter(i => i.file) // files only, no subfolders
