@@ -87,6 +87,12 @@ export default async function DashboardPage() {
             </div>
 
             <div className="flex items-center gap-4">
+              <a
+                href="/cases"
+                className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
+              >
+                Case Queue
+              </a>
               {session.user.role === 'admin' && (
                 <a
                   href="/admin/integrations/hubspot"
@@ -140,6 +146,7 @@ export default async function DashboardPage() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total Cases</p>
                   <p className="text-2xl font-bold text-gray-900">{stats.totalCases}</p>
+                  <a href="/cases" className="text-xs text-blue-600 hover:underline mt-1 inline-block">View case queue →</a>
                 </div>
                 <div className="bg-blue-100 p-3 rounded-lg">
                   <svg className="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
