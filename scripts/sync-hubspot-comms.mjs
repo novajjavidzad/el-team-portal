@@ -156,12 +156,76 @@ function stripHtml(raw) {
 
 // ─── Normalize engagement to comm row ─────────────────────
 
+// ─── Direction inference ───────────────────────────────────
+
+// Known Easy Lemon / RockPoint owned identifiers
+const EL_EMAIL_DOMAINS = new Set([
+  'easylemon.com',
+  'rockpointgrowth.com',
+  'rockpointlaw.com',
+  'rockpointlawpc.com',
+])
+
+const EL_PHONE_NUMBERS = new Set([
+  '+18554353666',  // Easy Lemon Intake/Main (855) 435-3666
+  '8554353666',
+  '18554353666',
+])
+
+function isELEmail(email) {
+  if (!email) return false
+  const domain = email.split('@')[1]?.toLowerCase()
+  return EL_EMAIL_DOMAINS.has(domain)
+}
+
+function isELPhone(phone) {
+  if (!phone) return false
+  const digits = phone.replace(/\D/g, '')
+  return EL_PHONE_NUMBERS.has('+' + digits) || EL_PHONE_NUMBERS.has(digits)
+}
+
 function normalizeDirection(raw) {
   if (!raw) return null
   const v = raw.toLowerCase()
   if (v.includes('inbound')) return 'inbound'
   if (v.includes('outbound')) return 'outbound'
   return 'unknown'
+}
+
+// Returns { direction, source } where source is how it was determined
+function inferDirection(channel, { hsDirection, senderEmail, recipientEmails, fromNumber, toNumber, loggedFrom }) {
+  // 1. HubSpot explicit direction (not unknown)
+  const hsResolved = normalizeDirection(hsDirection)
+  if (hsResolved && hsResolved !== 'unknown') {
+    return { direction: hsResolved, source: 'hubspot' }
+  }
+
+  // 2. Email: derive from sender/recipient domains
+  if (channel === 'email') {
+    if (senderEmail) {
+      if (isELEmail(senderEmail)) return { direction: 'outbound', source: 'inferred_sender_domain' }
+      // Sender is not EL — check if any recipient is EL (client emailing EL)
+      const toEL = (recipientEmails ?? []).some(isELEmail)
+      if (toEL) return { direction: 'inbound', source: 'inferred_recipient_domain' }
+      // Sender unknown domain, recipient not EL — outbound to client
+      return { direction: 'outbound', source: 'inferred_recipient_external' }
+    }
+  }
+
+  // 3. Call: derive from phone numbers
+  if (channel === 'call') {
+    if (fromNumber && isELPhone(fromNumber)) return { direction: 'outbound', source: 'inferred_from_number' }
+    if (toNumber   && isELPhone(toNumber))   return { direction: 'inbound',  source: 'inferred_to_number' }
+  }
+
+  // 4. SMS: derive from logged_from field
+  if (channel === 'sms' && loggedFrom) {
+    const lf = loggedFrom.toLowerCase()
+    if (lf.includes('client') || lf.includes('inbound')) return { direction: 'inbound',  source: 'inferred_logged_from' }
+    if (lf.includes('crm') || lf.includes('outbound'))   return { direction: 'outbound', source: 'inferred_logged_from' }
+  }
+
+  return { direction: 'unknown', source: 'unresolvable' }
 }
 
 function parseEmailAddresses(raw) {
@@ -176,6 +240,7 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
 
   let channel = 'other'
   let direction = null
+  let directionSource = 'unknown'
   let subject = null
   let snippet = null
   let body = null
@@ -197,7 +262,11 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
   switch (type) {
     case 'calls': {
       channel = 'call'
-      direction = normalizeDirection(p.hs_call_direction)
+      ;({ direction, source: directionSource } = inferDirection('call', {
+        hsDirection: p.hs_call_direction,
+        fromNumber: p.hs_call_from_number,
+        toNumber: p.hs_call_to_number,
+      }))
       subject = p.hs_call_title ?? null
       durationSeconds = p.hs_call_duration ? Math.round(parseInt(p.hs_call_duration) / 1000) : null
       outcome = p.hs_call_disposition ?? null
@@ -219,17 +288,20 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
 
     case 'emails': {
       channel = 'email'
-      direction = normalizeDirection(p.hs_email_direction)
+      // Resolve sender/recipients first so inferDirection can use them
+      const fromPartsE = [p.hs_email_from_firstname, p.hs_email_from_lastname].filter(Boolean)
+      senderEmail = p.hs_email_from_email ?? null
+      senderName = fromPartsE.length ? fromPartsE.join(' ') : null
+      recipientEmails = parseEmailAddresses(p.hs_email_to_email)
+      ;({ direction, source: directionSource } = inferDirection('email', {
+        hsDirection: p.hs_email_direction,
+        senderEmail,
+        recipientEmails,
+      }))
       subject = p.hs_email_subject ?? null
       threadId = p.hs_email_thread_id ?? null
 
-      // Sender
-      const fromParts = [p.hs_email_from_firstname, p.hs_email_from_lastname].filter(Boolean)
-      senderEmail = p.hs_email_from_email ?? null
-      senderName = fromParts.length ? fromParts.join(' ') : null
-
-      // Recipients
-      recipientEmails = parseEmailAddresses(p.hs_email_to_email)
+      // CC/BCC
       ccEmails = [
         ...parseEmailAddresses(p.hs_email_cc_email),
         ...parseEmailAddresses(p.hs_email_bcc_email),
@@ -250,8 +322,10 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
 
     case 'communications': {
       channel = 'sms'
-      const loggedFrom = p.hs_communication_logged_from?.toLowerCase() ?? ''
-      direction = loggedFrom.includes('client') || loggedFrom.includes('inbound') ? 'inbound' : 'outbound'
+      ;({ direction, source: directionSource } = inferDirection('sms', {
+        hsDirection: null,
+        loggedFrom: p.hs_communication_logged_from,
+      }))
       threadId = p.hs_communication_conversations_thread_id ? String(p.hs_communication_conversations_thread_id) : null
       body = stripHtml(p.hs_communication_body)
       snippet = body ? body.slice(0, 500) : null
@@ -313,7 +387,7 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
     source_system:         'hubspot',
     resolution_method:     resolutionMethod,
     needs_review:          false,
-    raw_metadata:          { type, properties: p },
+    raw_metadata:          { type, properties: p, direction_source: directionSource },
     is_deleted:            false,
     updated_at:            new Date().toISOString(),
   }
