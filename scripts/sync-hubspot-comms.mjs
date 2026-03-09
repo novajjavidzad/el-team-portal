@@ -103,6 +103,28 @@ function getPropsForType(type) {
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
 
+// Strip HTML tags and decode common entities, collapse whitespace
+function stripHtml(raw) {
+  if (!raw) return null
+  return raw
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, 500)
+}
+
 // ─── Normalize engagement to comm row ─────────────────────
 
 function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId, hubspotDealId, resolutionMethod) {
@@ -123,7 +145,7 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
       direction = p.hs_call_direction?.toLowerCase() === 'inbound' ? 'inbound'
                 : p.hs_call_direction?.toLowerCase() === 'outbound' ? 'outbound' : 'unknown'
       subject = p.hs_call_title ?? null
-      snippet = p.hs_call_body ? p.hs_call_body.slice(0, 500) : null
+      snippet = stripHtml(p.hs_call_body)
       durationSeconds = p.hs_call_duration ? Math.round(parseInt(p.hs_call_duration) / 1000) : null
       outcome = p.hs_call_disposition ?? null
       break
@@ -133,24 +155,24 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
       direction = p.hs_email_direction?.toLowerCase().includes('inbound') ? 'inbound'
                 : p.hs_email_direction?.toLowerCase().includes('outbound') ? 'outbound' : 'unknown'
       subject = p.hs_email_subject ?? null
-      snippet = p.hs_email_text ? p.hs_email_text.slice(0, 500) : null
+      snippet = stripHtml(p.hs_email_text)
       break
 
     case 'communications':
       channel = 'sms'
       direction = p.hs_communication_logged_from?.toLowerCase().includes('client') ? 'inbound' : 'outbound'
-      snippet = p.hs_communication_body ? p.hs_communication_body.slice(0, 500) : null
+      snippet = stripHtml(p.hs_communication_body)
       break
 
     case 'notes':
       channel = 'note'
-      snippet = p.hs_note_body ? p.hs_note_body.slice(0, 500) : null
+      snippet = stripHtml(p.hs_note_body)
       break
 
     case 'meetings':
       channel = 'meeting'
       subject = p.hs_meeting_title ?? null
-      snippet = p.hs_meeting_body ? p.hs_meeting_body.slice(0, 500) : null
+      snippet = stripHtml(p.hs_meeting_body)
       outcome = p.hs_meeting_outcome ?? null
       occurredAt = p.hs_meeting_start_time ?? occurredAt
       break
@@ -158,7 +180,7 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
     case 'tasks':
       channel = 'task'
       subject = p.hs_task_subject ?? null
-      snippet = p.hs_task_body ? p.hs_task_body.slice(0, 500) : null
+      snippet = stripHtml(p.hs_task_body)
       outcome = p.hs_task_status ?? null
       break
   }
