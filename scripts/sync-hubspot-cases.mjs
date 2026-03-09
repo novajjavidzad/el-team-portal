@@ -107,10 +107,14 @@ function applyTransform(value, transform, mapping) {
   if (value === null || value === undefined || value === '') return null
 
   switch (transform) {
-    case 'parseInt':
-      return parseInt(value) || null
+    case 'parseInt': {
+      const s = String(value).trim().replace(/,/g, '')
+      if (/k$/i.test(s)) return Math.round(parseFloat(s) * 1000) || null
+      if (/m$/i.test(s)) return Math.round(parseFloat(s) * 1000000) || null
+      return parseInt(s) || null
+    }
     case 'parseFloat':
-      return parseFloat(value) || null
+      return parseFloat(String(value).replace(/,/g, '')) || null
     case 'lowercase':
       return String(value).toLowerCase()
     case 'uppercase':
