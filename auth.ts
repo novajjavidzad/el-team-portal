@@ -7,6 +7,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+// Schema-qualified client for staff schema
+const staffDb = supabase.schema('staff')
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     MicrosoftEntraID({
@@ -21,62 +24,66 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     })
   ],
   callbacks: {
-    async signIn({ user, account, profile }) {
-      // Only allow users from approved domains
+    async signIn({ user }) {
       if (!user.email) return false
-      
+
       const emailDomain = user.email.split('@')[1]
       const allowedDomains = ['easylemon.com', 'rockpointgrowth.com']
-      
-      if (!allowedDomains.includes(emailDomain)) {
-        return false
-      }
-      
-      // Check if user exists in staff_users table
+      if (!allowedDomains.includes(emailDomain)) return false
+
       try {
-        const { data: staffUser } = await supabase
+        // Query staff.staff_users (correct schema)
+        const { data: staffUser, error } = await staffDb
           .from('staff_users')
-          .select('*')
+          .select('id, email, active')
           .eq('email', user.email)
           .single()
-        
-        if (!staffUser) {
-          // Create staff user record if doesn't exist
-          await supabase
-            .from('staff_users')
-            .insert([
-              {
-                email: user.email,
-                name: user.name || '',
-                role: user.email === 'novaj@rockpointgrowth.com' ? 'admin' : 'staff',
-                active: true
-              }
-            ])
+
+        if (error && error.code !== 'PGRST116') {
+          // PGRST116 = no rows found — expected for new users
+          console.error('staff_users lookup error:', error)
         }
-        
+
+        if (!staffUser) {
+          // New user — create record in staff.staff_users
+          const { error: insertError } = await staffDb
+            .from('staff_users')
+            .insert({
+              email: user.email,
+              role: user.email === 'novaj@rockpointgrowth.com' ? 'admin' : 'staff',
+              active: true
+            })
+
+          if (insertError) {
+            console.error('staff_users insert error:', insertError)
+          }
+        }
+
         return true
       } catch (error) {
-        console.error('Error checking staff user:', error)
-        return false
+        console.error('signIn error:', error)
+        return true // Allow sign in even if DB write fails
       }
     },
-    async session({ session, token }) {
-      if (session.user?.email) {
-        try {
-          const { data: staffUser } = await supabase
-            .from('staff_users')
-            .select('role, active')
-            .eq('email', session.user.email)
-            .single()
-          
-          if (staffUser) {
-            session.user.role = staffUser.role
-            session.user.active = staffUser.active
-          }
-        } catch (error) {
-          console.error('Error fetching user role:', error)
+
+    async session({ session }) {
+      if (!session.user?.email) return session
+
+      try {
+        const { data: staffUser } = await staffDb
+          .from('staff_users')
+          .select('role, active')
+          .eq('email', session.user.email)
+          .single()
+
+        if (staffUser) {
+          session.user.role = staffUser.role
+          session.user.active = staffUser.active
         }
+      } catch (error) {
+        console.error('session callback error:', error)
       }
+
       return session
     }
   },

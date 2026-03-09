@@ -1,24 +1,72 @@
 import { auth, signOut } from '@/auth'
 import { redirect } from 'next/navigation'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 import { Card, CardHeader, CardContent, CardTitle } from '@/components/ui/card'
 
+// Schema-qualified clients
+function getCoreDb() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  ).schema('core')
+}
+
 async function getDashboardStats() {
-  // Database tables are in custom schemas (core, staff, etc.) not accessible via REST API
-  // This needs to be configured in Supabase settings to expose the correct schemas
-  console.log('Database connection working, but tables not exposed via REST API')
-  
-  return {
-    totalCases: 0,
-    activeCases: 0,
-    reviewCases: 0,
-    recentCases: []
+  const coreDb = getCoreDb()
+
+  try {
+    // Total cases
+    const { count: totalCases, error: totalError } = await coreDb
+      .from('cases')
+      .select('*', { count: 'exact', head: true })
+
+    if (totalError) console.error('total cases error:', totalError)
+
+    // Active cases
+    const { count: activeCases, error: activeError } = await coreDb
+      .from('cases')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'active')
+
+    if (activeError) console.error('active cases error:', activeError)
+
+    // Cases in review
+    const { count: reviewCases, error: reviewError } = await coreDb
+      .from('cases')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'attorney_review')
+
+    if (reviewError) console.error('review cases error:', reviewError)
+
+    // Recent cases
+    const { data: recentCases, error: recentError } = await coreDb
+      .from('cases')
+      .select('case_id, status, stage, created_at, hubspot_deal_id')
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    if (recentError) console.error('recent cases error:', recentError)
+
+    return {
+      totalCases: totalCases ?? 0,
+      activeCases: activeCases ?? 0,
+      reviewCases: reviewCases ?? 0,
+      recentCases: recentCases ?? []
+    }
+  } catch (error) {
+    console.error('getDashboardStats error:', error)
+    return {
+      totalCases: 0,
+      activeCases: 0,
+      reviewCases: 0,
+      recentCases: []
+    }
   }
 }
 
 export default async function DashboardPage() {
   const session = await auth()
-  
+
   if (!session?.user) {
     redirect('/login')
   }
@@ -37,17 +85,22 @@ export default async function DashboardPage() {
               </div>
               <h1 className="text-xl font-semibold text-gray-900">Team Portal</h1>
             </div>
-            
+
             <div className="flex items-center gap-4">
               <div className="text-sm">
                 <span className="text-gray-600">Welcome, </span>
                 <span className="font-semibold text-gray-900">{session.user.name}</span>
+                {session.user.role && (
+                  <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                    {session.user.role}
+                  </span>
+                )}
               </div>
               <form action={async () => {
                 "use server"
                 await signOut()
               }}>
-                <button 
+                <button
                   type="submit"
                   className="text-sm text-gray-600 hover:text-gray-900 transition-colors"
                 >
@@ -72,7 +125,7 @@ export default async function DashboardPage() {
                 </div>
                 <div className="bg-blue-100 p-3 rounded-lg">
                   <svg className="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
               </div>
@@ -88,7 +141,7 @@ export default async function DashboardPage() {
                 </div>
                 <div className="bg-green-100 p-3 rounded-lg">
                   <svg className="w-6 h-6 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"></path>
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
                 </div>
               </div>
@@ -104,7 +157,7 @@ export default async function DashboardPage() {
                 </div>
                 <div className="bg-yellow-100 p-3 rounded-lg">
                   <svg className="w-6 h-6 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd"></path>
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
                   </svg>
                 </div>
               </div>
@@ -125,28 +178,32 @@ export default async function DashboardPage() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-200">
-                      <th className="text-left py-3 px-4 font-medium text-gray-600">Case Name</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-600">Case ID</th>
                       <th className="text-left py-3 px-4 font-medium text-gray-600">Status</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-600">Contact</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-600">Stage</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-600">HubSpot Deal</th>
                       <th className="text-left py-3 px-4 font-medium text-gray-600">Created</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {stats.recentCases.map((case_, index) => (
-                      <tr key={index} className="border-b border-gray-100">
-                        <td className="py-3 px-4 font-medium text-gray-900">
-                          {case_.dealname || 'Unnamed Case'}
+                    {stats.recentCases.map((c: any) => (
+                      <tr key={c.case_id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-3 px-4 font-mono text-xs text-gray-600">
+                          {c.case_id?.slice(0, 8)}...
                         </td>
                         <td className="py-3 px-4">
                           <span className="inline-flex px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
-                            {case_.el_app_status || 'Unknown'}
+                            {c.status ?? '—'}
                           </span>
                         </td>
-                        <td className="py-3 px-4 text-gray-600">
-                          {case_.phone || case_.email || 'No contact'}
+                        <td className="py-3 px-4 text-gray-600 text-sm">
+                          {c.stage ?? '—'}
                         </td>
-                        <td className="py-3 px-4 text-gray-600">
-                          {case_.createdate ? new Date(case_.createdate).toLocaleDateString() : 'Unknown'}
+                        <td className="py-3 px-4 text-gray-600 text-sm">
+                          {c.hubspot_deal_id ?? '—'}
+                        </td>
+                        <td className="py-3 px-4 text-gray-600 text-sm">
+                          {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
                         </td>
                       </tr>
                     ))}
