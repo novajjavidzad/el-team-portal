@@ -151,7 +151,8 @@ function stripHtml(raw) {
     .replace(/&#39;/g, "'")
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-    .slice(0, 500)
+  // NOTE: no truncation here — callers apply their own limits
+  // snippet = body.slice(0, 500)  ← done at call site, not here
 }
 
 // ─── Normalize engagement to comm row ─────────────────────
