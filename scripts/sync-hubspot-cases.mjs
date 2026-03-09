@@ -121,6 +121,31 @@ function applyTransform(value, transform, mapping) {
       return null
     case 'stage_map':
       return STAGE_MAP[value] ?? 'unknown'
+    case 'parse_date': {
+      // Handle ISO dates, "July 2021", "07/2021", "2021-07", etc.
+      const s = String(value).trim()
+      if (!s) return null
+      // Already ISO date
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
+      // "Month YYYY" or "Month, YYYY"
+      const monthYear = s.match(/^([A-Za-z]+)[,\s]+(\d{4})$/)
+      if (monthYear) {
+        const months = { january:1,february:2,march:3,april:4,may:5,june:6,
+          july:7,august:8,september:9,october:10,november:11,december:12 }
+        const m = months[monthYear[1].toLowerCase()]
+        if (m) return `${monthYear[2]}-${String(m).padStart(2,'0')}-01`
+      }
+      // "MM/DD/YYYY" or "MM/YYYY"
+      const slashDate = s.match(/^(\d{1,2})\/(\d{1,2}|\d{4})(?:\/(\d{4}))?$/)
+      if (slashDate) {
+        if (slashDate[3]) return `${slashDate[3]}-${String(slashDate[1]).padStart(2,'0')}-${String(slashDate[2]).padStart(2,'0')}`
+        if (slashDate[2].length === 4) return `${slashDate[2]}-${String(slashDate[1]).padStart(2,'0')}-01`
+      }
+      // Try native Date parse as last resort
+      const d = new Date(s)
+      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10)
+      return null
+    }
     case 'state_abbreviate': {
       const v = String(value).trim()
       if (v.length === 2) return v.toUpperCase()
