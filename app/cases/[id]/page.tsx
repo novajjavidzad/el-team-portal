@@ -90,6 +90,8 @@ interface CaseDetail {
   estimated_value: number | null
   settlement_amount: number | null
   attorney_fees: number | null
+  sharepoint_folder_url: string | null
+  sharepoint_folder_title: string | null
   case_notes: string | null
   internal_notes: string | null
   tags: string[] | null
@@ -419,6 +421,17 @@ export default function CaseDetailPage() {
 
           {/* Actions */}
           <div className="flex items-center gap-2 mt-1">
+            {c.sharepoint_folder_url && (
+              <a
+                href={c.sharepoint_folder_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={c.sharepoint_folder_title ?? 'Open SharePoint Folder'}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
+              >
+                📁 SharePoint ↗
+              </a>
+            )}
             <a
               href={`https://app.hubspot.com/contacts/47931752/deal/${c.hubspot_deal_id}`}
               target="_blank"
