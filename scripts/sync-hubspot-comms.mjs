@@ -89,15 +89,44 @@ async function fetchDealEngagements(dealId) {
 }
 
 function getPropsForType(type) {
-  const base = ['hs_timestamp', 'hs_createdate']
+  const base = ['hs_timestamp', 'hs_createdate', 'hs_object_id']
   switch (type) {
-    case 'calls':          return [...base, 'hs_call_direction','hs_call_duration','hs_call_disposition','hs_call_title','hs_call_body','hs_call_status']
-    case 'emails':         return [...base, 'hs_email_direction','hs_email_subject','hs_email_text','hs_email_status']
-    case 'communications': return [...base, 'hs_communication_channel_type','hs_communication_body','hs_communication_logged_from']
-    case 'notes':          return [...base, 'hs_note_body']
-    case 'meetings':       return [...base, 'hs_meeting_title','hs_meeting_body','hs_meeting_outcome','hs_meeting_start_time']
-    case 'tasks':          return [...base, 'hs_task_subject','hs_task_body','hs_task_status','hs_task_type']
-    default:               return base
+    case 'calls':
+      return [...base,
+        'hs_call_direction', 'hs_call_duration', 'hs_call_disposition', 'hs_call_status',
+        'hs_call_title', 'hs_call_body', 'hs_call_summary',
+        'hs_call_from_number', 'hs_call_to_number',
+        'hs_call_from_number_nickname', 'hs_call_to_number_nickname',
+        'hs_call_recording_url', 'hs_call_has_transcript', 'hs_call_transcription_id',
+      ]
+    case 'emails':
+      return [...base,
+        'hs_email_direction', 'hs_email_subject', 'hs_email_status',
+        'hs_email_text',                              // plain text body
+        'hs_email_from_email', 'hs_email_from_firstname', 'hs_email_from_lastname',
+        'hs_email_to_email', 'hs_email_to_firstname', 'hs_email_to_lastname',
+        'hs_email_cc_email', 'hs_email_bcc_email',
+        'hs_email_thread_id', 'hs_email_message_id',
+        'hs_attachment_ids', 'hs_email_stripped_attachment_count',
+        'hs_email_headers',
+      ]
+    case 'communications':
+      return [...base,
+        'hs_communication_channel_type', 'hs_communication_body',
+        'hs_communication_logged_from',
+        'hs_communication_conversations_thread_id',
+      ]
+    case 'notes':
+      return [...base, 'hs_note_body']
+    case 'meetings':
+      return [...base,
+        'hs_meeting_title', 'hs_meeting_body', 'hs_meeting_outcome',
+        'hs_meeting_start_time', 'hs_meeting_end_time',
+      ]
+    case 'tasks':
+      return [...base, 'hs_task_subject', 'hs_task_body', 'hs_task_status', 'hs_task_type']
+    default:
+      return base
   }
 }
 
@@ -127,6 +156,20 @@ function stripHtml(raw) {
 
 // ─── Normalize engagement to comm row ─────────────────────
 
+function normalizeDirection(raw) {
+  if (!raw) return null
+  const v = raw.toLowerCase()
+  if (v.includes('inbound')) return 'inbound'
+  if (v.includes('outbound')) return 'outbound'
+  return 'unknown'
+}
+
+function parseEmailAddresses(raw) {
+  // HubSpot returns semicolon-separated email strings
+  if (!raw) return []
+  return raw.split(';').map(s => s.trim()).filter(Boolean)
+}
+
 function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId, hubspotDealId, resolutionMethod) {
   const p = obj.properties ?? {}
   const engId = String(obj.id)
@@ -135,75 +178,144 @@ function normalizeEngagement(type, obj, caseId, caseContactId, hubspotContactId,
   let direction = null
   let subject = null
   let snippet = null
+  let body = null
   let durationSeconds = null
   let outcome = null
   let occurredAt = p.hs_timestamp ?? p.hs_createdate ?? null
+  let senderEmail = null
+  let senderName = null
+  let recipientEmails = []
+  let ccEmails = []
+  let recordingUrl = null
+  let transcript = null
+  let hasAttachments = false
+  let attachmentsMetadata = []
+  let threadId = null
+  let fromNumber = null
+  let toNumber = null
 
   switch (type) {
-    case 'calls':
+    case 'calls': {
       channel = 'call'
-      direction = p.hs_call_direction?.toLowerCase() === 'inbound' ? 'inbound'
-                : p.hs_call_direction?.toLowerCase() === 'outbound' ? 'outbound' : 'unknown'
+      direction = normalizeDirection(p.hs_call_direction)
       subject = p.hs_call_title ?? null
-      snippet = stripHtml(p.hs_call_body)
       durationSeconds = p.hs_call_duration ? Math.round(parseInt(p.hs_call_duration) / 1000) : null
       outcome = p.hs_call_disposition ?? null
-      break
+      recordingUrl = p.hs_call_recording_url ?? null
+      fromNumber = p.hs_call_from_number ?? null
+      toNumber = p.hs_call_to_number ?? null
 
-    case 'emails':
+      // Full body: prefer summary (AI-generated), fall back to call body/notes
+      const fullBody = p.hs_call_summary ?? p.hs_call_body ?? null
+      body = stripHtml(fullBody)
+      snippet = body ? body.slice(0, 500) : null
+
+      // Transcript reference
+      if (p.hs_call_has_transcript === 'true' && p.hs_call_transcription_id) {
+        transcript = `HubSpot transcript ID: ${p.hs_call_transcription_id}`
+      }
+      break
+    }
+
+    case 'emails': {
       channel = 'email'
-      direction = p.hs_email_direction?.toLowerCase().includes('inbound') ? 'inbound'
-                : p.hs_email_direction?.toLowerCase().includes('outbound') ? 'outbound' : 'unknown'
+      direction = normalizeDirection(p.hs_email_direction)
       subject = p.hs_email_subject ?? null
-      snippet = stripHtml(p.hs_email_text)
-      break
+      threadId = p.hs_email_thread_id ?? null
 
-    case 'communications':
+      // Sender
+      const fromParts = [p.hs_email_from_firstname, p.hs_email_from_lastname].filter(Boolean)
+      senderEmail = p.hs_email_from_email ?? null
+      senderName = fromParts.length ? fromParts.join(' ') : null
+
+      // Recipients
+      recipientEmails = parseEmailAddresses(p.hs_email_to_email)
+      ccEmails = [
+        ...parseEmailAddresses(p.hs_email_cc_email),
+        ...parseEmailAddresses(p.hs_email_bcc_email),
+      ]
+
+      // Full body — plain text preferred
+      body = stripHtml(p.hs_email_text)
+      snippet = body ? body.slice(0, 500) : null
+
+      // Attachments
+      const attachCount = parseInt(p.hs_email_stripped_attachment_count) || 0
+      hasAttachments = attachCount > 0 || !!p.hs_attachment_ids
+      if (p.hs_attachment_ids) {
+        attachmentsMetadata = p.hs_attachment_ids.split(';').filter(Boolean).map(id => ({ hubspot_file_id: id.trim() }))
+      }
+      break
+    }
+
+    case 'communications': {
       channel = 'sms'
-      direction = p.hs_communication_logged_from?.toLowerCase().includes('client') ? 'inbound' : 'outbound'
-      snippet = stripHtml(p.hs_communication_body)
+      const loggedFrom = p.hs_communication_logged_from?.toLowerCase() ?? ''
+      direction = loggedFrom.includes('client') || loggedFrom.includes('inbound') ? 'inbound' : 'outbound'
+      threadId = p.hs_communication_conversations_thread_id ? String(p.hs_communication_conversations_thread_id) : null
+      body = stripHtml(p.hs_communication_body)
+      snippet = body ? body.slice(0, 500) : null
       break
+    }
 
-    case 'notes':
+    case 'notes': {
       channel = 'note'
-      snippet = stripHtml(p.hs_note_body)
+      body = stripHtml(p.hs_note_body)
+      snippet = body ? body.slice(0, 500) : null
       break
+    }
 
-    case 'meetings':
+    case 'meetings': {
       channel = 'meeting'
       subject = p.hs_meeting_title ?? null
-      snippet = stripHtml(p.hs_meeting_body)
       outcome = p.hs_meeting_outcome ?? null
       occurredAt = p.hs_meeting_start_time ?? occurredAt
+      body = stripHtml(p.hs_meeting_body)
+      snippet = body ? body.slice(0, 500) : null
       break
+    }
 
-    case 'tasks':
+    case 'tasks': {
       channel = 'task'
       subject = p.hs_task_subject ?? null
-      snippet = stripHtml(p.hs_task_body)
       outcome = p.hs_task_status ?? null
+      body = stripHtml(p.hs_task_body)
+      snippet = body ? body.slice(0, 500) : null
       break
+    }
   }
 
   return {
-    case_id:                caseId,
-    case_contact_id:        caseContactId ?? null,
-    hubspot_engagement_id:  engId,
-    hubspot_contact_id:     hubspotContactId ?? null,
-    hubspot_deal_id:        hubspotDealId ?? null,
+    case_id:               caseId,
+    case_contact_id:       caseContactId ?? null,
+    hubspot_engagement_id: engId,
+    hubspot_contact_id:    hubspotContactId ?? null,
+    hubspot_deal_id:       hubspotDealId ?? null,
     channel,
     direction,
     subject,
     snippet,
-    occurred_at:            occurredAt,
-    duration_seconds:       durationSeconds,
+    body,
+    occurred_at:           occurredAt,
+    duration_seconds:      durationSeconds,
     outcome,
-    source_system:          'hubspot',
-    resolution_method:      resolutionMethod,
-    needs_review:           false,
-    raw_metadata:           { type, properties: p },
-    is_deleted:             false,
-    updated_at:             new Date().toISOString(),
+    sender_email:          senderEmail,
+    sender_name:           senderName,
+    recipient_emails:      recipientEmails,
+    cc_emails:             ccEmails,
+    recording_url:         recordingUrl,
+    transcript,
+    has_attachments:       hasAttachments,
+    attachments_metadata:  attachmentsMetadata,
+    thread_id:             threadId,
+    from_number:           fromNumber,
+    to_number:             toNumber,
+    source_system:         'hubspot',
+    resolution_method:     resolutionMethod,
+    needs_review:          false,
+    raw_metadata:          { type, properties: p },
+    is_deleted:            false,
+    updated_at:            new Date().toISOString(),
   }
 }
 
