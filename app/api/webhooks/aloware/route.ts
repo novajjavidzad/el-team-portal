@@ -256,22 +256,66 @@ export async function POST(req: NextRequest) {
   }
 
   if (direction === 'outbound') {
-    // PENDING: outbound payload shape not yet confirmed from a real capture.
-    // Store in webhook_captures for now and process once outbound schema is verified.
+    // Outbound payload confirmed 2026-03-10 — identical structure to inbound.
+    // direction=2, lead_number=client, incoming_number=EL line.
+    // from/to are flipped: EL line sends to client.
     const db = getDb()
-    await db
-      .schema('infrastructure' as never)
-      .from('webhook_captures')
-      .insert({
-        source:     'aloware',
-        event_type: payload.event ?? 'OutboundSMS-pending',
-        body:       payload as unknown as Record<string, unknown>,
-        raw_body:   JSON.stringify(payload),
-        notes:      'Outbound SMS — pending direction=2 payload verification',
-      })
 
-    console.log('[aloware] Outbound SMS captured for later processing, aloware_id:', payload.body?.id)
-    return NextResponse.json({ ok: true, queued: true, reason: 'outbound_pending_verification' })
+    const b = payload.body
+    const duplicate = await isDuplicate(db, b.id)
+    if (duplicate) {
+      console.log(`[aloware] Skipping duplicate outbound aloware_id=${b.id}`)
+      return NextResponse.json({ ok: true, skipped: true })
+    }
+
+    const resolution = await resolveCase(db, b.lead_number)
+    const threadId   = deriveThreadId(b.contact_id, b.campaign_id)
+    const bodyText   = b.body ?? ''
+
+    const row = {
+      case_id:               resolution.resolved?.caseId        ?? null,
+      case_contact_id:       resolution.resolved?.caseContactId ?? null,
+      hubspot_deal_id:       resolution.resolved?.hubspotDealId ?? null,
+      hubspot_engagement_id: String(b.id),
+
+      channel:               'sms',
+      direction:             'outbound',
+      body:                  bodyText,
+      snippet:               makeSnippet(bodyText),
+      occurred_at:           parseOccurredAt(b.created_at),
+      from_number:           normalisePhone(b.incoming_number), // EL line sends
+      to_number:             normalisePhone(b.lead_number),     // to client
+      thread_id:             threadId,
+
+      source_system:         'aloware',
+      resolution_method:     resolution.resolved ? 'phone_match' : null,
+      needs_review:          resolution.needsReview,
+      review_reason:         resolution.reviewReason,
+
+      raw_metadata: {
+        aloware_id:          b.id,
+        aloware_contact_id:  b.contact_id,
+        aloware_campaign_id: b.campaign_id,
+        event:               payload.event,
+        direction_raw:       b.direction,
+        user_id:             b.user_id ?? null,
+      },
+    }
+
+    const { data, error } = await db
+      .schema('core' as never)
+      .from('communications')
+      .insert(row)
+      .select('id')
+      .single()
+
+    if (error) {
+      console.error('[aloware] Outbound insert error:', error.message)
+      return NextResponse.json({ ok: false, error: error.message }, { status: 200 })
+    }
+
+    console.log(`[aloware] Outbound stored aloware_id=${b.id} → comms id=${data.id}`)
+    return NextResponse.json({ ok: true, id: data.id })
   }
 
   return NextResponse.json({ ok: true, skipped: true, reason: `unknown_direction: ${payload.body?.direction}` })
