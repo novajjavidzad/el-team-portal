@@ -33,9 +33,9 @@ const RULES: ClassificationRule[] = [
 
   // ── Purchase / Lease Agreement ────────────────────────────────────────────
   {
-    pattern: /lease[\s_-]?agreement|purchase[\s_-]?agreement|sales[\s_-]?contract|bill[\s_-]?of[\s_-]?sale|retail[\s_-]?installment/i,
+    pattern: /lease[\s_-]?agreement|purchase[\s_-]?agreement|sales?[\s_-]?contract|bill[\s_-]?of[\s_-]?sale|retail[\s_-]?installment|transaction[\s_-]?information|buyer[\s_-]?order/i,
     code: 'purchase_agreement',
-    confidence: 0.97,
+    confidence: 0.92,
     label: 'Purchase or lease agreement keyword',
   },
 
@@ -93,6 +93,32 @@ const RULES: ClassificationRule[] = [
     code: 'payment_records',
     confidence: 0.90,
     label: 'Payment record keyword',
+  },
+
+  // ── Maintenance Records ───────────────────────────────────────────────────
+  // Must come BEFORE repair_order to avoid "maintenance RO" ambiguity
+  // Matches "Maintenance" standalone — NOT "Maintenance RO" (RO rule wins if both present)
+  {
+    pattern: /\bmaintenance\b(?!.*\bro\b)(?!.*repair[\s_-]?order)/i,
+    code: 'maintenance_record',
+    confidence: 0.90,
+    label: 'Maintenance record keyword',
+  },
+
+  // ── Recall Notice ─────────────────────────────────────────────────────────
+  {
+    pattern: /\brecall\b/i,
+    code: 'recall_notice',
+    confidence: 0.95,
+    label: 'Recall notice keyword',
+  },
+
+  // ── Vehicle History Report ────────────────────────────────────────────────
+  {
+    pattern: /vehicle[\s_-]?history|carfax|autocheck|history[\s_-]?report/i,
+    code: 'vehicle_history_report',
+    confidence: 0.95,
+    label: 'Vehicle history report keyword',
   },
 
   // ── Photos of Defects ─────────────────────────────────────────────────────
