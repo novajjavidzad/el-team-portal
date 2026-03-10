@@ -42,6 +42,6 @@ export default auth((req: NextRequest & { auth: any }) => {
 // Configure which routes should be processed by the middleware
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/admin/backfill-sms|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
