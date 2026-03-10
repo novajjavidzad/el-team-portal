@@ -225,7 +225,47 @@ const DIRECTION_COLOR: Record<string, string> = {
   inbound: 'text-green-600', outbound: 'text-blue-600', unknown: 'text-gray-400'
 }
 
-function CommRow({ comm }: { comm: Comm }) {
+// ── SMS bubble renderer ────────────────────────────────────────────────────
+function SmsBubble({ comm }: { comm: Comm }) {
+  const isOutbound = comm.direction === 'outbound'
+  const time = comm.occurred_at
+    ? new Date(comm.occurred_at).toLocaleString('en-US', {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      })
+    : '—'
+
+  return (
+    <div className={`px-6 py-2 flex flex-col ${isOutbound ? 'items-end' : 'items-start'}`}>
+      <div className={`max-w-sm flex flex-col ${isOutbound ? 'items-end' : 'items-start'} gap-0.5`}>
+
+        {/* Bubble */}
+        <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
+          isOutbound
+            ? 'bg-blue-600 text-white rounded-br-md'
+            : 'bg-gray-100 text-gray-800 rounded-bl-md'
+        }`}>
+          {comm.body || comm.snippet || '—'}
+        </div>
+
+        {/* Meta — time + phone */}
+        <div className="flex items-center gap-2 px-1">
+          <span className="text-xs text-gray-400">{time}</span>
+          {comm.from_number && (
+            <span className="text-xs text-gray-300">
+              {isOutbound ? comm.from_number : comm.from_number}
+            </span>
+          )}
+          {comm.needs_review && (
+            <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">⚠ Review</span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Standard card renderer (calls, emails, notes, tasks) ───────────────────
+function CommCard({ comm }: { comm: Comm }) {
   const [expanded, setExpanded] = useState(false)
   const icon = CHANNEL_ICON[comm.channel] ?? '•'
   const dirColor = DIRECTION_COLOR[comm.direction ?? 'unknown'] ?? 'text-gray-400'
@@ -237,13 +277,11 @@ function CommRow({ comm }: { comm: Comm }) {
       ? `${Math.floor(comm.duration_seconds / 60)}m ${comm.duration_seconds % 60}s`
       : `${comm.duration_seconds}s`
     : null
-
   const fullContent = comm.body || comm.snippet
-  const hasContent = !!fullContent
+  const hasContent  = !!fullContent
 
   return (
     <div className={`px-6 py-4 transition-colors ${comm.needs_review ? 'border-l-4 border-l-yellow-400' : ''}`}>
-      {/* Header row */}
       <div
         className="flex items-start justify-between gap-4 cursor-pointer"
         onClick={() => hasContent && setExpanded(e => !e)}
@@ -266,25 +304,22 @@ function CommRow({ comm }: { comm: Comm }) {
                 <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">⚠ Review</span>
               )}
             </div>
-
             {(comm.sender_email || comm.recipient_emails?.length > 0) && (
               <div className="flex gap-3 mt-0.5 text-xs text-gray-400">
                 {comm.sender_email && <span>From: {comm.sender_name ? `${comm.sender_name} <${comm.sender_email}>` : comm.sender_email}</span>}
                 {comm.recipient_emails?.length > 0 && <span>To: {comm.recipient_emails.join(', ')}</span>}
               </div>
             )}
-            {(comm.from_number || comm.to_number) && (
+            {(comm.from_number || comm.to_number) && comm.channel !== 'sms' && (
               <div className="text-xs text-gray-400 mt-0.5">
                 {comm.from_number} → {comm.to_number}
               </div>
             )}
-
             {!expanded && comm.snippet && (
               <p className="text-xs text-gray-500 mt-1 line-clamp-2 max-w-2xl">{comm.snippet}</p>
             )}
           </div>
         </div>
-
         <div className="text-right shrink-0 flex flex-col items-end gap-1">
           <p className="text-xs text-gray-400 whitespace-nowrap">{time}</p>
           {hasContent && (
@@ -293,7 +328,6 @@ function CommRow({ comm }: { comm: Comm }) {
         </div>
       </div>
 
-      {/* Expanded content */}
       {expanded && (
         <div className="mt-3 ml-9 space-y-3">
           {fullContent && (
@@ -307,14 +341,8 @@ function CommRow({ comm }: { comm: Comm }) {
           {comm.recording_url && (
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-400">Recording:</span>
-              <a
-                href={comm.recording_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-blue-600 hover:underline"
-              >
-                Listen ↗
-              </a>
+              <a href={comm.recording_url} target="_blank" rel="noopener noreferrer"
+                className="text-xs text-blue-600 hover:underline">Listen ↗</a>
             </div>
           )}
           {comm.review_reason && (
@@ -324,6 +352,12 @@ function CommRow({ comm }: { comm: Comm }) {
       )}
     </div>
   )
+}
+
+// ── CommRow — routes to correct renderer by channel ────────────────────────
+function CommRow({ comm }: { comm: Comm }) {
+  if (comm.channel === 'sms') return <SmsBubble comm={comm} />
+  return <CommCard comm={comm} />
 }
 
 // ─── Page ──────────────────────────────────────────────────────────────────
