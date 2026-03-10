@@ -1,13 +1,23 @@
 /**
  * Initialize document checklist for one or more cases.
- * Creates a checklist row for every active document_type,
- * marking required types as 'required' and optional as 'required' too
- * (staff can waive if not applicable).
  *
- * Safe to re-run — uses upsert, won't overwrite existing status.
+ * Creates a checklist row for every active document_type per case.
+ * is_required is set based on the case's CURRENT stage — not a blanket default.
+ *
+ * Stage → required document types:
+ *   intake / nurture / document_collection / attorney_review / info_needed / unknown
+ *     → repair_order only
+ *   sign_up / retained
+ *     → repair_order + purchase_agreement + vehicle_registration
+ *   settled / dropped
+ *     → nothing required (case resolved/closed)
+ *
+ * Safe to re-run — upsert preserves existing status but DOES update is_required
+ * so stage transitions (e.g. intake → sign_up) are reflected on re-run.
  *
  * Usage:
  *   node scripts/init-case-checklist.mjs --deal-id=57782494293
+ *   node scripts/init-case-checklist.mjs --deal-ids=57782494293,57750922281
  *   node scripts/init-case-checklist.mjs --all
  */
 
@@ -24,11 +34,35 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 const db     = createClient(SUPABASE_URL, SUPABASE_KEY)
 const coreDb = db.schema('core')
 
+// ── Stage → required document type codes ──────────────────────────────────
+
+const PRE_SIGN_UP_STAGES = new Set([
+  'intake', 'nurture', 'document_collection',
+  'attorney_review', 'info_needed', 'unknown',
+])
+
+const POST_SIGN_UP_STAGES = new Set(['sign_up', 'retained'])
+
+const RESOLVED_STAGES = new Set(['settled', 'dropped'])
+
+function requiredTypesForStage(caseStatus) {
+  if (RESOLVED_STAGES.has(caseStatus)) return new Set()
+  if (POST_SIGN_UP_STAGES.has(caseStatus)) {
+    return new Set(['repair_order', 'purchase_agreement', 'vehicle_registration'])
+  }
+  // Pre-sign-up (including unknown/fallback)
+  return new Set(['repair_order'])
+}
+
+// ── Init checklist for one case ────────────────────────────────────────────
+
 async function initChecklist(caseRow) {
+  const required = requiredTypesForStage(caseRow.case_status)
+
   // Load all active document types
   const { data: types, error: typeErr } = await coreDb
     .from('document_types')
-    .select('code, is_required_default')
+    .select('code')
     .eq('is_active', true)
     .order('sort_order')
 
@@ -37,18 +71,37 @@ async function initChecklist(caseRow) {
   const rows = types.map(t => ({
     case_id:            caseRow.id,
     document_type_code: t.code,
-    status:             'required',
-    is_required:        t.is_required_default,
+    status:             'required',   // default workflow state; does NOT mean "alarmed"
+    is_required:        required.has(t.code),
   }))
 
-  // Upsert — do nothing on conflict so existing status is preserved
+  // Upsert:
+  //   - New rows: insert with correct is_required
+  //   - Existing rows: update is_required (stage may have changed) but preserve status
   const { error } = await coreDb
     .from('case_document_checklist')
-    .upsert(rows, { onConflict: 'case_id,document_type_code', ignoreDuplicates: true })
+    .upsert(rows, { onConflict: 'case_id,document_type_code', ignoreDuplicates: false })
 
   if (error) throw new Error(`Checklist upsert failed: ${error.message}`)
 
-  return types.length
+  // Restore status for rows that already had activity (upsert above would have reset status)
+  // — handled by Supabase upsert: ignoreDuplicates=false updates all columns,
+  //   so we only update is_required and leave status alone via a separate targeted update
+  await coreDb
+    .from('case_document_checklist')
+    .update({ is_required: false, updated_at: new Date().toISOString() })
+    .eq('case_id', caseRow.id)
+    .not('document_type_code', 'in', `(${[...required].map(c => `"${c}"`).join(',')})`)
+
+  if (required.size > 0) {
+    await coreDb
+      .from('case_document_checklist')
+      .update({ is_required: true, updated_at: new Date().toISOString() })
+      .eq('case_id', caseRow.id)
+      .in('document_type_code', [...required])
+  }
+
+  return { total: types.length, required: required.size }
 }
 
 // ─── Main ────────────────────────────────────────────────────
@@ -61,15 +114,25 @@ const allFlag    = args.includes('--all')
 let cases = []
 
 if (dealIdArg) {
-  const { data } = await coreDb.from('cases').select('id,hubspot_deal_id,client_first_name,client_last_name').eq('hubspot_deal_id', dealIdArg).single()
+  const { data } = await coreDb
+    .from('cases')
+    .select('id,hubspot_deal_id,client_first_name,client_last_name,case_status')
+    .eq('hubspot_deal_id', dealIdArg)
+    .single()
   if (!data) { console.error('Case not found'); process.exit(1) }
   cases = [data]
 } else if (dealIdsArg) {
   const ids = dealIdsArg.split(',').map(s => s.trim())
-  const { data } = await coreDb.from('cases').select('id,hubspot_deal_id,client_first_name,client_last_name').in('hubspot_deal_id', ids)
+  const { data } = await coreDb
+    .from('cases')
+    .select('id,hubspot_deal_id,client_first_name,client_last_name,case_status')
+    .in('hubspot_deal_id', ids)
   cases = data ?? []
 } else if (allFlag) {
-  const { data } = await coreDb.from('cases').select('id,hubspot_deal_id,client_first_name,client_last_name').eq('is_deleted', false)
+  const { data } = await coreDb
+    .from('cases')
+    .select('id,hubspot_deal_id,client_first_name,client_last_name,case_status')
+    .eq('is_deleted', false)
   cases = data ?? []
   console.log(`Found ${cases.length} cases`)
 } else {
@@ -81,10 +144,10 @@ let ok = 0, errors = 0
 
 for (const c of cases) {
   const name = [c.client_first_name, c.client_last_name].filter(Boolean).join(' ') || c.hubspot_deal_id
-  process.stdout.write(`▶  ${name} ... `)
+  process.stdout.write(`▶  ${name} [${c.case_status}] ... `)
   try {
-    const count = await initChecklist(c)
-    console.log(`✅ (${count} checklist items)`)
+    const { total, required } = await initChecklist(c)
+    console.log(`✅ (${total} types | ${required} required)`)
     ok++
   } catch (e) {
     console.log(`✗ ${e.message}`)
