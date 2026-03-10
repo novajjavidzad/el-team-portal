@@ -1184,8 +1184,7 @@ export default function CaseDetailPage() {
             </div>
           )}
 
-          {/* ── SMS Compose ── */}
-          <SmsCompose caseId={c.id} onSent={() => loadComms(commChannel)} />
+          {/* SMS compose disabled — read-only until Nov approves outbound */}
         </div>
 
       </main>
