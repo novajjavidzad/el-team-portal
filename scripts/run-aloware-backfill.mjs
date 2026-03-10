@@ -2,7 +2,7 @@
  * Aloware SMS Backfill Driver
  *
  * Reads pre-processed fixture JSON and POSTs batches to the deployed
- * /api/admin/backfill-sms endpoint on Vercel (where Supabase creds live).
+ * /api/webhooks/backfill-sms endpoint on Vercel (where Supabase creds live).
  *
  * Usage:
  *   # 100-row dry run:
@@ -24,7 +24,7 @@ const __dirname   = dirname(fileURLToPath(import.meta.url))
 const FIXTURE     = resolve(__dirname, 'data/aloware-backfill.json')
 const TOKEN       = process.env.BACKFILL_IMPORT_TOKEN
 const TARGET_URL  = process.env.BACKFILL_TARGET_URL ?? 'https://team.easylemon.com'
-const ENDPOINT    = `${TARGET_URL}/api/admin/backfill-sms`
+const ENDPOINT    = `${TARGET_URL}/api/webhooks/backfill-sms`
 
 const DRY_RUN     = process.argv.includes('--dry-run')
 const BATCH_SIZE  = 500
