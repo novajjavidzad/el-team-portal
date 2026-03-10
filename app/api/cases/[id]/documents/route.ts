@@ -73,15 +73,19 @@ export async function GET(
   // Unclassified files (not linked to any checklist item)
   const unclassified = (files ?? []).filter(f => !f.checklist_item_id)
 
+  const satisfied = (status: string) =>
+    ['received', 'under_review', 'approved', 'waived'].includes(status)
+
   return NextResponse.json({
     checklist: enrichedChecklist,
     unclassified,
     docTypes: docTypes ?? [],
     stats: {
       total:        enrichedChecklist.length,
-      required:     enrichedChecklist.filter(i => i.status === 'required').length,
+      // missing = is_required=true AND not yet satisfied — matches UI alarm logic
+      required:     enrichedChecklist.filter(i => i.is_required && !satisfied(i.status)).length,
       requested:    enrichedChecklist.filter(i => i.status === 'requested').length,
-      received:     enrichedChecklist.filter(i => ['received','under_review','approved'].includes(i.status)).length,
+      received:     enrichedChecklist.filter(i => satisfied(i.status)).length,
       approved:     enrichedChecklist.filter(i => i.status === 'approved').length,
       waived:       enrichedChecklist.filter(i => i.status === 'waived').length,
       unclassified: unclassified.length,

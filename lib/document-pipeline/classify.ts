@@ -47,6 +47,14 @@ const RULES: ClassificationRule[] = [
     label: 'Warranty keyword',
   },
 
+  // ── Vehicle Registration ──────────────────────────────────────────────────
+  {
+    pattern: /vehicle[\s_-]?registration|\bregistration\b(?!.*repair)|\bdmv\b|reg[\s_-]?card/i,
+    code: 'vehicle_registration',
+    confidence: 0.93,
+    label: 'Vehicle registration keyword',
+  },
+
   // ── Odometer Disclosure ───────────────────────────────────────────────────
   {
     pattern: /odometer/i,

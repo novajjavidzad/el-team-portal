@@ -376,8 +376,23 @@ interface DocumentStats {
   unclassified: number
 }
 
+// ── is_required + status → visual state ──────────────────────────────────
+// ALARM  = is_required=true  AND status not yet satisfied
+// ACTIVE = status has real activity (received/review/approved) regardless of is_required
+// SILENT = is_required=false AND status has no activity (slot exists, not required now)
+
+type RowDisplay = 'alarm' | 'active' | 'silent'
+
+function rowDisplay(item: ChecklistItem): RowDisplay {
+  const satisfied = ['received', 'under_review', 'approved', 'waived'].includes(item.status)
+  if (satisfied) return 'active'
+  if (item.is_required) return 'alarm'
+  return 'silent'
+}
+
+// Icon reflects status activity — NOT is_required
 const STATUS_ICON: Record<string, string> = {
-  required:     '❌',
+  required:     '○',   // no-activity state; alarm driven by is_required, not this icon
   requested:    '⏳',
   received:     '📄',
   under_review: '🔍',
@@ -386,14 +401,26 @@ const STATUS_ICON: Record<string, string> = {
   waived:       '—',
 }
 
+// Badge colour reflects status activity
 const STATUS_BADGE: Record<string, string> = {
-  required:     'bg-red-50 text-red-600',
+  required:     'bg-gray-100 text-gray-500',      // neutral — not alarming by default
   requested:    'bg-yellow-50 text-yellow-700',
   received:     'bg-blue-50 text-blue-700',
   under_review: 'bg-purple-50 text-purple-700',
   approved:     'bg-green-50 text-green-700',
   rejected:     'bg-orange-50 text-orange-700',
   waived:       'bg-gray-50 text-gray-400',
+}
+
+// Human-readable status labels that don't leak the stored value to staff
+const STATUS_LABEL: Record<string, string> = {
+  required:     'not started',
+  requested:    'requested',
+  received:     'received',
+  under_review: 'under review',
+  approved:     'approved',
+  rejected:     'rejected',
+  waived:       'waived',
 }
 
 function formatBytes(bytes: number | null) {
@@ -405,47 +432,78 @@ function formatBytes(bytes: number | null) {
 
 // ─── Collapsible checklist row ─────────────────────────────────────────────
 function ChecklistRow({ item }: { item: ChecklistItem }) {
-  // Auto-expand rows that already have files linked
+  const display = rowDisplay(item)
   const [expanded, setExpanded] = useState(item.files.length > 0)
   const hasFiles = item.files.length > 0
-  const canToggle = hasFiles
+
+  // Row-level visual treatment
+  const rowBg =
+    display === 'alarm'  ? 'bg-red-50/40' :
+    display === 'silent' ? 'bg-gray-50/30' :
+    ''
+
+  // Icon: alarm rows get the ❌, others use status-based icon
+  const icon =
+    display === 'alarm'
+      ? '❌'
+      : STATUS_ICON[item.status] ?? '○'
+
+  // Label: never show the raw stored value 'required' — show 'not started' instead
+  const statusLabel = STATUS_LABEL[item.status] ?? item.status.replace('_', ' ')
+
+  // Badge: alarm rows get red; others use status-based color
+  const badgeClass =
+    display === 'alarm'
+      ? 'bg-red-100 text-red-700'
+      : STATUS_BADGE[item.status] ?? 'bg-gray-100 text-gray-500'
+
+  // Silent rows (not required, no activity) are visually de-emphasized
+  const labelClass = display === 'silent' ? 'text-gray-400' : 'text-gray-800'
 
   return (
-    <div className="px-6 py-4">
-      {/* Header row — clickable when files exist */}
+    <div className={`px-6 py-3.5 ${rowBg}`}>
       <div
-        className={`flex items-center justify-between gap-4 ${canToggle ? 'cursor-pointer select-none' : ''}`}
-        onClick={() => canToggle && setExpanded(e => !e)}
+        className={`flex items-center justify-between gap-4 ${hasFiles ? 'cursor-pointer select-none' : ''}`}
+        onClick={() => hasFiles && setExpanded(e => !e)}
       >
         <div className="flex items-center gap-3 min-w-0 flex-wrap">
-          <span className="text-base shrink-0">{STATUS_ICON[item.status] ?? '•'}</span>
+          <span className="text-sm shrink-0 w-5 text-center">{icon}</span>
 
-          <span className="text-sm font-medium text-gray-800">
+          <span className={`text-sm font-medium ${labelClass}`}>
             {item.type?.label ?? item.document_type_code}
           </span>
 
-          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[item.status]}`}>
-            {item.status.replace('_', ' ')}
-          </span>
+          {/* Status badge — uses human label, never leaks stored 'required' value */}
+          {display !== 'silent' && (
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badgeClass}`}>
+              {statusLabel}
+            </span>
+          )}
 
-          {/* File count chip — the key clarity signal */}
+          {/* Required tag — only when is_required=true and not yet satisfied */}
+          {display === 'alarm' && (
+            <span className="text-xs font-medium text-red-500">required this stage</span>
+          )}
+
+          {/* File count chip */}
           {hasFiles && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">
               {item.files.length} file{item.files.length !== 1 ? 's' : ''}
             </span>
           )}
 
-          {item.is_required && item.status === 'required' && (
-            <span className="text-xs text-red-400">required</span>
+          {/* Silent rows: soft label so staff know the slot is available */}
+          {display === 'silent' && !hasFiles && (
+            <span className="text-xs text-gray-300">available if needed</span>
           )}
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
           <div className="text-right text-xs text-gray-300">
-            {item.received_at && <p>Received {new Date(item.received_at).toLocaleDateString()}</p>}
+            {item.received_at && <p>{new Date(item.received_at).toLocaleDateString()}</p>}
             {item.approved_at && <p>Approved {new Date(item.approved_at).toLocaleDateString()}</p>}
           </div>
-          {canToggle && (
+          {hasFiles && (
             <span
               className={`text-gray-400 text-lg leading-none inline-block transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
               aria-hidden="true"
@@ -456,14 +514,9 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
         </div>
       </div>
 
-      {/* Description — only when collapsed and no files */}
-      {!hasFiles && item.type?.description && (
-        <p className="text-xs text-gray-400 mt-0.5 ml-8">{item.type.description}</p>
-      )}
-
       {/* Expanded file list */}
       {expanded && hasFiles && (
-        <div className="mt-3 ml-8 space-y-1.5">
+        <div className="mt-2.5 ml-8 space-y-1.5">
           {item.files.map(f => (
             <div key={f.id} className="flex items-center gap-2 text-xs text-gray-500">
               <span className="shrink-0">📎</span>
@@ -569,7 +622,10 @@ function DocumentsSection({
             <div className="flex items-center gap-3 text-xs text-gray-400">
               {stats.approved > 0     && <span className="text-green-600">✅ {stats.approved} approved</span>}
               {stats.received > 0     && <span className="text-blue-600">📄 {stats.received} received</span>}
-              {stats.required > 0     && <span className="text-red-500">❌ {stats.required} missing</span>}
+              {/* Only alarm rows count as missing — is_required=true and not satisfied */}
+              {checklist.filter(i => rowDisplay(i) === 'alarm').length > 0 && (
+                <span className="text-red-500">❌ {checklist.filter(i => rowDisplay(i) === 'alarm').length} missing</span>
+              )}
               {stats.unclassified > 0 && <span className="text-yellow-600">📎 {stats.unclassified} unclassified</span>}
             </div>
           )}
