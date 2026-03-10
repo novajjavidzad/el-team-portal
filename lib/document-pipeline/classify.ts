@@ -33,9 +33,9 @@ const RULES: ClassificationRule[] = [
 
   // ── Purchase / Lease Agreement ────────────────────────────────────────────
   {
-    pattern: /lease[\s_-]?agreement|purchase[\s_-]?agreement|sales?[\s_-]?contract|bill[\s_-]?of[\s_-]?sale|retail[\s_-]?installment|transaction[\s_-]?information|buyer[\s_-]?order/i,
+    pattern: /lease[\s_-]?agreement|purchase[\s_-]?agreement|sales?[\s_-]?contract|bill[\s_-]?of[\s_-]?sale|retail[\s_-]?installment/i,
     code: 'purchase_agreement',
-    confidence: 0.92,
+    confidence: 0.97,
     label: 'Purchase or lease agreement keyword',
   },
 
