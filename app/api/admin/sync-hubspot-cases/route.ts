@@ -63,6 +63,24 @@ const STATE_ABBREVIATIONS: Record<string, string> = {
   'virginia':'VA','washington':'WA','west virginia':'WV','wisconsin':'WI','wyoming':'WY',
 }
 
+// ── Safe date ─────────────────────────────────────────────────────────────────
+// Returns ISO date string (YYYY-MM-DD or full ISO timestamp) or null.
+// Never lets an unparseable value reach Postgres — stores null instead.
+function safeDate(raw: unknown): string | null {
+  if (!raw) return null
+  const s = String(raw).trim()
+  if (!s) return null
+  // Already valid ISO date or datetime
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s
+  // HubSpot epoch ms timestamp
+  if (/^\d{13}$/.test(s)) return new Date(parseInt(s)).toISOString()
+  // Try native parse
+  const d = new Date(s)
+  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10)
+  // Unresolvable (e.g. "June or July") — store null, never crash
+  return null
+}
+
 // ── Phone normalisation ───────────────────────────────────────────────────────
 function normalisePhone(raw: string | null | undefined): string | null {
   if (!raw) return null
@@ -179,15 +197,15 @@ function mapToCase(deal: Record<string, unknown>, contact: Record<string, unknow
     vehicle_vin:           dp['vin'] ? String(dp['vin']).toUpperCase().trim() : null,
     vehicle_mileage:       mileage ? (applyTransform(mileage, 'parseInt') as number) : null,
     vehicle_purchase_price: purchasePrice ? (applyTransform(purchasePrice, 'parseFloat') as number) : null,
-    vehicle_purchase_date: purchaseDate ?? null,
+    vehicle_purchase_date: safeDate(purchaseDate),
     vehicle_is_new:        isNew ? applyTransform(isNew, 'boolean_new_used') : null,
     state_jurisdiction:    stateRaw ? applyTransform(stateRaw, 'state_abbreviate') : null,
     case_status:           stage,
     case_type:             'lemon_law',
     case_priority:         'normal',
     estimated_value:       dp['amount'] ? (applyTransform(dp['amount'], 'parseFloat') as number) : null,
-    created_at:            dp['createdate'] ?? null,
-    closed_at:             isClosed && dp['closedate'] ? dp['closedate'] : null,
+    created_at:            safeDate(dp['createdate']),
+    closed_at:             isClosed ? safeDate(dp['closedate']) : null,
     is_deleted:            false,
     updated_at:            new Date().toISOString(),
   }
